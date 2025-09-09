@@ -1,0 +1,197 @@
+name: Deploy Wav2Lip Proof of Concept to AWS (US East 2) Spot
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-2
+  INSTANCE_TYPE: g4dn.xlarge
+  KEY_NAME: ml-automation-us-east-2
+  SECURITY_GROUP: wav2lip-sg-us-east-2
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+        
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Configure AWS CLI
+        run: |
+          aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+          aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+          aws configure set default.region $AWS_REGION
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Retrieve latest DLAMI via SSM  
+        id: ami
+        run: |
+          AMI_ID=$(aws ssm get-parameter \
+            --name /aws/service/deeplearning/ami/x86_64/oss-nvidia-driver-gpu-pytorch-2.7-ubuntu-22.04/latest/ami-id \
+            --query "Parameter.Value" --output text)
+          echo "DLAMI_ID=$AMI_ID" >> $GITHUB_ENV
+
+      - name: Decode PEM Key
+        run: |
+          echo "${{ secrets.EC2_AUTOMATION_KEY_US_EAST_2 }}" | base64 -d > key.pem
+          chmod 600 key.pem
+
+      - name: Create or get security group
+        run: |
+          set -e
+          SG_ID=$(aws ec2 describe-security-groups \
+            --group-names "$SECURITY_GROUP" \
+            --query 'SecurityGroups[0].GroupId' \
+            --output text 2>/dev/null || true)
+
+          if [ "$SG_ID" = "None" ] || [ -z "$SG_ID" ]; then
+            SG_ID=$(aws ec2 create-security-group \
+              --group-name "$SECURITY_GROUP" \
+              --description "SDXL REST API SG" \
+              --query 'GroupId' \
+              --output text)
+
+            # Allow SSH
+            aws ec2 authorize-security-group-ingress \
+              --group-id "$SG_ID" \
+              --protocol tcp \
+              --port 22 \
+              --cidr 0.0.0.0/0 || true
+
+            # Allow API
+            aws ec2 authorize-security-group-ingress \
+              --group-id "$SG_ID" \
+              --protocol tcp \
+              --port 8000 \
+              --cidr 0.0.0.0/0 || true
+          fi
+
+          echo "SG_ID=$SG_ID" >> "$GITHUB_ENV"
+
+      - name: Launch Spot instance
+        run: |
+          set -e
+
+          # List of instance types to try (primary first)
+          INSTANCE_TYPES=($INSTANCE_TYPE "g4dn.xlarge")  # add more as needed
+          AZ_LIST=("us-east-2a" "us-east-2b" "us-east-2c" "us-east-2d" "us-east-2e" "us-east-2f")       # modify as per your region
+
+          SUCCESS=0
+
+          for ITYPE in "${INSTANCE_TYPES[@]}"; do
+            for AZ in "${AZ_LIST[@]}"; do
+              echo "Trying to launch instance type $ITYPE in AZ $AZ..."
+              
+              # Capture error output
+              ERROR_OUTPUT=$(aws ec2 run-instances \
+                --instance-type $ITYPE \
+                --image-id ${{ env.DLAMI_ID }} \
+                --key-name $KEY_NAME \
+                --security-group-ids $SG_ID \
+                --placement AvailabilityZone=$AZ \
+                --instance-market-options '{"MarketType":"spot","SpotOptions":{"SpotInstanceType":"one-time"}}' \
+                --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":100}}]' \
+                --query 'Instances[0].InstanceId' --output text 2>&1) || true
+
+              if [[ "$ERROR_OUTPUT" == "i-"* ]]; then
+                # Success: INSTANCE_ID starts with "i-"
+                INSTANCE_ID=$ERROR_OUTPUT
+                echo "Instance launched successfully: $INSTANCE_ID (Type: $ITYPE, AZ: $AZ)"
+                SUCCESS=1
+                break 2
+              else
+                # Print exact AWS error
+                echo "Failed to launch in $AZ with type $ITYPE. Error:"
+                echo "$ERROR_OUTPUT"
+                WAIT=$((RANDOM % 10 + 5))  # wait 5–15 seconds
+                echo "Waiting $WAIT seconds before next attempt..."
+                sleep $WAIT
+              fi
+            done
+          done
+
+          if [ $SUCCESS -ne 1 ]; then
+            echo "ERROR: Could not launch spot instance in any AZ or instance type."
+            exit 1
+          fi
+
+          # Save instance ID and public IP
+          aws ssm put-parameter --name "/sdxl/instance-id" --value "$INSTANCE_ID" --type String --overwrite
+          echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_ENV
+          aws ec2 wait instance-status-ok --instance-ids $INSTANCE_ID
+
+          PUBLIC_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+          aws ssm put-parameter --name "/sdxl/public-ip" --value "$PUBLIC_IP" --type String --overwrite
+          echo "PUBLIC_IP=$PUBLIC_IP" >> $GITHUB_ENV
+          echo "Instance running at $PUBLIC_IP"
+
+      - name: Wait for SSH to be ready
+        run: |
+          for i in {1..30}; do
+            if ssh -o StrictHostKeyChecking=no -i key.pem ubuntu@$PUBLIC_IP "echo up" >/dev/null 2>&1; then
+              break
+            fi
+            echo "Waiting for SSH..."
+            sleep 10
+          done
+
+      - name: Copy all app files to instance
+        run: |
+            scp -o StrictHostKeyChecking=no -i key.pem -r * ubuntu@$PUBLIC_IP:/home/ubuntu/
+
+      - name: Install dependencies and start API
+        run: |
+          ssh -o StrictHostKeyChecking=no -i key.pem ubuntu@$PUBLIC_IP << 'EOF'
+            set -e
+            cd /home/ubuntu
+
+            # Update system and install dependencies
+            sudo apt update
+            sudo apt install -y software-properties-common wget curl ffmpeg build-essential awscli
+            
+            # Install Python 3.12 from deadsnakes PPA
+            sudo add-apt-repository ppa:deadsnakes/ppa -y
+            sudo apt update
+            sudo apt install -y python3.12 python3.12-venv python3.12-dev python3.12-distutils
+            
+            # Verify Python installation
+            python3.12 --version
+            
+            # Verify ffmpeg installation
+            ffmpeg -version
+            
+            # Install pip for Python 3.12
+            curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
+            
+            # Install Poetry
+            curl -sSL https://install.python-poetry.org | python3.12 -
+            export PATH="$HOME/.local/bin:$PATH"
+            
+            # Verify Poetry installation
+            poetry --version
+            
+            # Download all files from S3 bucket to wav2lip/checkpoints
+            aws s3 sync s3://aws-automation-ml-models/wav2lip/ wav2lip/checkpoints/
+            
+            # Verify downloaded files
+            ls -la wav2lip/checkpoints/
+            
+            # Go back to home directory and configure Poetry
+            cd /home/ubuntu
+            poetry config virtualenvs.create true
+            poetry config virtualenvs.in-project true
+            
+            # Export Hugging Face token (from Actions secret)
+            export HUGGINGFACE_HUB_TOKEN=${HF_TOKEN}
+
+            # Install dependencies using Poetry
+            poetry install --no-dev
+            
+            # Keep the project ready
+            echo "Project setup complete with Python 3.12 and Poetry"
+          EOF
+
+

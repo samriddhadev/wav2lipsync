@@ -1,6 +1,5 @@
-from pydantic import BaseModel, Field, validator
-from typing import Literal, Union
-from pathlib import Path
+from pydantic import BaseModel, Field
+from typing import Literal, Union, Optional
 
 
 class PaddingConfig(BaseModel):
@@ -30,10 +29,8 @@ class OtherConfig(BaseModel):
 
 class OptionsConfig(BaseModel):
     """Main options configuration."""
-    video_file: str = Field(default="", description="Input video file path")
-    vocal_file: str = Field(default="", description="Input audio file path")
     quality: Literal["Fast", "Improved", "Enhanced", "Experimental"] = Field(
-        default="Enhanced", 
+        default="Improved", 
         description="Processing quality level"
     )
     output_height: Union[Literal["full resolution", "half resolution"], int] = Field(
@@ -57,35 +54,38 @@ class OptionsConfig(BaseModel):
         description="Preview window mode"
     )
 
-    @validator('video_file')
-    def validate_video_file(cls, v):
-        """Validate video file exists if provided."""
-        if v and not Path(v).exists():
-            raise ValueError(f"Video file does not exist: {v}")
-        return v
 
-    @validator('vocal_file')
-    def validate_vocal_file(cls, v):
-        """Validate audio file exists if provided."""
-        if v and not Path(v).exists():
-            raise ValueError(f"Audio file does not exist: {v}")
-        return v
-
-    @validator('output_height')
-    def validate_output_height(cls, v):
-        """Validate output height is either a valid string or positive integer."""
-        if isinstance(v, str):
-            if v not in ["full resolution", "half resolution"]:
-                raise ValueError(f"Invalid output height string: {v}")
-        elif isinstance(v, int):
-            if v <= 0:
-                raise ValueError("Output height must be positive")
-        return v
-
-
-class EasyWav2LipConfig(BaseModel):
-    """Complete configuration model for Easy-Wav2Lip."""
+class Wav2LipConfig(BaseModel):
+    """Complete configuration model for Wav2Lip processing."""
     OPTIONS: OptionsConfig = Field(default_factory=OptionsConfig)
     PADDING: PaddingConfig = Field(default_factory=PaddingConfig)
     MASK: MaskConfig = Field(default_factory=MaskConfig)
     OTHER: OtherConfig = Field(default_factory=OtherConfig)
+
+    class Config:
+        """Pydantic model configuration."""
+        validate_assignment = True
+        extra = "allow"  # Allow extra fields for flexibility
+
+    def get_quality_description(self) -> str:
+        """Get description for the selected quality setting."""
+        descriptions = {
+            "Fast": "Wav2Lip only",
+            "Improved": "Wav2Lip with a feathered mask around the mouth to remove the square around the face",
+            "Enhanced": "Wav2Lip + mask + GFPGAN upscaling done on the face",
+            "Experimental": "Test version of applying gfpgan - see release notes"
+        }
+        return descriptions.get(self.OPTIONS.quality, "Unknown quality setting")
+
+    def get_resolution_scale(self) -> int:
+        """Get resolution scale factor based on output_height setting."""
+        if self.OPTIONS.output_height == "half resolution":
+            return 2
+        elif self.OPTIONS.output_height == "full resolution":
+            return 1
+        else:
+            return 3  # custom resolution
+
+    def is_custom_resolution(self) -> bool:
+        """Check if using custom resolution."""
+        return isinstance(self.OPTIONS.output_height, int)

@@ -3,14 +3,12 @@ import subprocess
 import json
 import os
 import dlib
-import gdown
 import pickle
 import re
-from models import Wav2Lip
+from wav2lip.models import Wav2Lip
 from base64 import b64encode
 from urllib.parse import urlparse
 from torch.hub import download_url_to_file, get_dir
-from IPython.display import HTML, display
 
 device = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
 
@@ -47,24 +45,6 @@ def get_video_details(filename):
 
     return width, height, fps, length
 
-
-def show_video(file_path):
-    """Function to display video in Colab"""
-    mp4 = open(file_path, "rb").read()
-    data_url = "data:video/mp4;base64," + b64encode(mp4).decode()
-    width, _, _, _ = get_video_details(file_path)
-    display(
-        HTML(
-            """
-  <video controls width=%d>
-      <source src="%s" type="video/mp4">
-  </video>
-  """
-            % (min(width, 1280), data_url)
-        )
-    )
-
-
 def format_time(seconds):
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
@@ -76,7 +56,6 @@ def format_time(seconds):
         return f"{minutes}m {seconds}s"
     else:
         return f"{seconds}s"
-
 
 def _load(checkpoint_path):
     if device != "cpu":
@@ -185,12 +164,3 @@ def load_file_from_url(url, model_dir=None, progress=True, file_name=None):
         print(f'Downloading: "{url}" to {cached_file}\n')
         download_url_to_file(url, cached_file, hash_prefix=None, progress=progress)
     return cached_file
-
-
-def g_colab():
-    try:
-        import google.colab
-
-        return True
-    except ImportError:
-        return False

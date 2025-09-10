@@ -6,7 +6,7 @@ authors = [
     {name = "Samriddha Chatterjee",email = "samriddhac.official@fake.local"}
 ]
 readme = "README.md"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.10,<3.13"
 dependencies = [
     "wyn-wav2lip (>=0.2.3,<0.3.0)",
     "basicsr (==1.4.2)",
@@ -22,9 +22,9 @@ dependencies = [
     "numpy (==1.26.1)",
     "opencv-python (==4.8.1.78)",
     "scipy (==1.11.3)",
-    "torch (==2.1.0+cu121)",
-    "torchvision (==0.16.0+cu121)",
-    "torchaudio (==2.1.0+cu121)",
+    "torch (==2.1.0)",
+    "torchvision (==0.16.0)",
+    "torchaudio (==2.1.0)",
     "fastapi (>=0.116.1,<0.117.0)",
     "uvicorn (>=0.35.0,<0.36.0)"
 ]

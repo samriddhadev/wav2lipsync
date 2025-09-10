@@ -5,7 +5,7 @@ on:
 
 env:
   AWS_REGION: us-east-2
-  INSTANCE_TYPE: g5.xlarge
+  INSTANCE_TYPE: g4dn.xlarge
   KEY_NAME: ml-automation-us-east-2
   SECURITY_GROUP: wav2lip-sg-us-east-2
 
@@ -175,15 +175,7 @@ jobs:
             sudo apt update
             sudo apt install -y software-properties-common wget curl ffmpeg build-essential awscli
             
-            # DLAMI has PyTorch pre-installed with proper CUDA support
-            # Let's use the conda environment that's already set up
-            source /opt/conda/etc/profile.d/conda.sh
-            conda activate pytorch || conda activate base
-            
-            # Check existing PyTorch installation
-            python -c "import torch; print(f'PyTorch version: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}')" || echo "PyTorch not available in current environment"
-            
-            # Verify NVIDIA drivers
+            # Verify NVIDIA drivers are working
             nvidia-smi
             
             # Install Python 3.10 from deadsnakes PPA
@@ -217,10 +209,6 @@ jobs:
             cd /home/ubuntu
             poetry config virtualenvs.create true
             poetry config virtualenvs.in-project true
-            
-            # Ensure conda environment is available for Poetry
-            source /opt/conda/etc/profile.d/conda.sh
-            conda activate pytorch || conda activate base
             
             # Install dependencies using Poetry (this will use the updated PyTorch versions)
             poetry install

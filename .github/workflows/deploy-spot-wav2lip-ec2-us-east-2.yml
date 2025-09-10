@@ -5,7 +5,7 @@ on:
 
 env:
   AWS_REGION: us-east-2
-  INSTANCE_TYPE: g4dn.xlarge
+  INSTANCE_TYPE: g5.xlarge
   KEY_NAME: ml-automation-us-east-2
   SECURITY_GROUP: wav2lip-sg-us-east-2
 

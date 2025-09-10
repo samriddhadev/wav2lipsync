@@ -71,6 +71,28 @@ jobs:
 
           echo "SG_ID=$SG_ID" >> "$GITHUB_ENV"
 
+      - name: Create or get instance profile for IAM role
+        run: |
+          set -e
+          ROLE_NAME="EC2SpotS3FullAccess"
+          INSTANCE_PROFILE_NAME="EC2SpotS3FullAccess-InstanceProfile"
+          
+          # Check if instance profile exists
+          if ! aws iam get-instance-profile --instance-profile-name "$INSTANCE_PROFILE_NAME" >/dev/null 2>&1; then
+            echo "Creating instance profile..."
+            aws iam create-instance-profile --instance-profile-name "$INSTANCE_PROFILE_NAME"
+            
+            # Add role to instance profile
+            aws iam add-role-to-instance-profile \
+              --instance-profile-name "$INSTANCE_PROFILE_NAME" \
+              --role-name "$ROLE_NAME"
+            
+            echo "Waiting for instance profile to be ready..."
+            sleep 10
+          else
+            echo "Instance profile already exists"
+          fi
+
       - name: Launch Spot instance
         run: |
           set -e
@@ -91,6 +113,7 @@ jobs:
                 --image-id ${{ env.DLAMI_ID }} \
                 --key-name $KEY_NAME \
                 --security-group-ids $SG_ID \
+                --iam-instance-profile Name=EC2SpotS3FullAccess-InstanceProfile \
                 --placement AvailabilityZone=$AZ \
                 --instance-market-options '{"MarketType":"spot","SpotOptions":{"SpotInstanceType":"one-time"}}' \
                 --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":100}}]' \
@@ -155,7 +178,7 @@ jobs:
             # Install Python 3.12 from deadsnakes PPA
             sudo add-apt-repository ppa:deadsnakes/ppa -y
             sudo apt update
-            sudo apt install -y python3.12 python3.12-venv python3.12-dev python3.12-distutils
+            sudo apt install -y python3.12 python3.12-venv python3.12-dev
             
             # Verify Python installation
             python3.12 --version

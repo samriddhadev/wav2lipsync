@@ -118,7 +118,7 @@ def run(video_path, audio_path, output_path, config: Wav2LipConfig):
 
     cmd = [
         sys.executable,
-        "inference.py",
+        "-m", "wav2lip.inference.py",
         "--face",
         video_file,
         "--audio",

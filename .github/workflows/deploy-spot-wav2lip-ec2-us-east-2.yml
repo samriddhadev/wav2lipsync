@@ -175,6 +175,17 @@ jobs:
             sudo apt update
             sudo apt install -y software-properties-common wget curl ffmpeg build-essential awscli
             
+            # DLAMI has PyTorch pre-installed with proper CUDA support
+            # Let's use the conda environment that's already set up
+            source /opt/conda/etc/profile.d/conda.sh
+            conda activate pytorch || conda activate base
+            
+            # Check existing PyTorch installation
+            python -c "import torch; print(f'PyTorch version: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}')" || echo "PyTorch not available in current environment"
+            
+            # Verify NVIDIA drivers
+            nvidia-smi
+            
             # Install Python 3.10 from deadsnakes PPA
             sudo add-apt-repository ppa:deadsnakes/ppa -y
             sudo apt update
@@ -207,8 +218,15 @@ jobs:
             poetry config virtualenvs.create true
             poetry config virtualenvs.in-project true
             
-            # Install dependencies using Poetry
+            # Ensure conda environment is available for Poetry
+            source /opt/conda/etc/profile.d/conda.sh
+            conda activate pytorch || conda activate base
+            
+            # Install dependencies using Poetry (this will use the updated PyTorch versions)
             poetry install
+            
+            # Test PyTorch installation after Poetry install
+            poetry run python -c "import torch; print(f'PyTorch version: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA device count: {torch.cuda.device_count()}')"
             
             # Keep the project ready
             echo "Project setup complete with Python 3.10 and Poetry"

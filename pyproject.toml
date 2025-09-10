@@ -8,7 +8,6 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 dependencies = [
-    "wyn-wav2lip (>=0.2.3,<0.3.0)",
     "basicsr (==1.4.2)",
     "batch-face (==1.4.0)",
     "dlib (==19.24.0)",
@@ -22,9 +21,9 @@ dependencies = [
     "numpy (==1.26.1)",
     "opencv-python (==4.8.1.78)",
     "scipy (==1.11.3)",
-    "torch (==2.1.0)",
-    "torchvision (==0.16.0)",
-    "torchaudio (==2.1.0)",
+    "torch (>=2.2.0,<2.5.0)",
+    "torchvision (>=0.17.0,<0.20.0)",
+    "torchaudio (>=2.2.0,<2.5.0)",
     "fastapi (>=0.116.1,<0.117.0)",
     "uvicorn (>=0.35.0,<0.36.0)"
 ]

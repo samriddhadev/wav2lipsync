@@ -6,7 +6,7 @@ authors = [
     {name = "Samriddha Chatterjee",email = "samriddhac.official@fake.local"}
 ]
 readme = "README.md"
-requires-python = ">=3.12,<4.0"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "wyn-wav2lip (>=0.2.3,<0.3.0)",
     "basicsr (==1.4.2)",

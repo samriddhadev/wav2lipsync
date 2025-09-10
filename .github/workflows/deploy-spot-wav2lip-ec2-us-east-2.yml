@@ -98,7 +98,7 @@ jobs:
           set -e
 
           # List of instance types to try (primary first)
-          INSTANCE_TYPES=($INSTANCE_TYPE "g5.xlarge")  # add more as needed
+          INSTANCE_TYPES=($INSTANCE_TYPE "g5.xlarge" "g5.2xlarge")  # add more as needed
           AZ_LIST=("us-east-2a" "us-east-2b" "us-east-2c" "us-east-2d" "us-east-2e" "us-east-2f")       # modify as per your region
 
           SUCCESS=0

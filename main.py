@@ -12,7 +12,7 @@ import uvicorn
 import torch
 
 from wav2lip import run
-from config_model import Wav2LipConfig
+from model.config_model import Wav2LipConfig
 
 app = FastAPI(
     title="Wav2Lip API",
@@ -102,9 +102,9 @@ async def generate_video(
         
         # Process the video with configuration
         run(
-            video_file=image_path,
-            vocal_file=audio_path,
-            output_file=output_path,
+            video_path=image_path,
+            audio_path=audio_path,
+            output_path=output_path,
             config=config  # Pass the configuration
         )
         

@@ -6,7 +6,6 @@ import dlib
 import pickle
 import re
 from wav2lip.models import Wav2Lip
-from base64 import b64encode
 from urllib.parse import urlparse
 from torch.hub import download_url_to_file, get_dir
 
@@ -118,16 +117,16 @@ def is_url(string):
 
 def load_predictor():
     checkpoint = os.path.join(
-        "checkpoints", "shape_predictor_68_face_landmarks_GTX.dat"
+        "wav2lip", "checkpoints", "shape_predictor_68_face_landmarks_GTX.dat"
     )
     predictor = dlib.shape_predictor(checkpoint)
     mouth_detector = dlib.get_frontal_face_detector()
 
     # Serialize the variables
-    with open(os.path.join("checkpoints", "predictor.pkl"), "wb") as f:
+    with open(os.path.join("wav2lip", "checkpoints", "predictor.pkl"), "wb") as f:
         pickle.dump(predictor, f)
 
-    with open(os.path.join("checkpoints", "mouth_detector.pkl"), "wb") as f:
+    with open(os.path.join("wav2lip", "checkpoints", "mouth_detector.pkl"), "wb") as f:
         pickle.dump(mouth_detector, f)
 
     # delete the .dat file as it is no longer needed

@@ -7,8 +7,7 @@ import traceback
 from wav2lip.install import setup
 from wav2lip.easy_functions import (format_time,
                             get_input_length,
-                            get_video_details,
-                            show_video)
+                            get_video_details)
 from model.config_model import Wav2LipConfig
 
 import logging

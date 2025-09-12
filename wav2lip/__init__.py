@@ -52,9 +52,9 @@ def run(video_path, audio_path, output_path, config: Wav2LipConfig):
         working_directory = os.getcwd()
 
         if wav2lip_version == "Wav2Lip_GAN":
-            checkpoint_path = os.path.join(working_directory, "checkpoints", "Wav2Lip_GAN.pth")
+            checkpoint_path = os.path.join(working_directory, "wav2lip", "checkpoints", "Wav2Lip_GAN.pth")
         else:
-            checkpoint_path = os.path.join(working_directory, "checkpoints", "Wav2Lip.pth")
+            checkpoint_path = os.path.join(working_directory, "wav2lip", "checkpoints", "Wav2Lip.pth")
 
         if feathering == 3:
             feathering = 5
@@ -119,7 +119,7 @@ def run(video_path, audio_path, output_path, config: Wav2LipConfig):
 
         cmd = [
             sys.executable,
-            "-m", "wav2lip.inference.py",
+            "-m", "wav2lip.inference",
             "--face",
             video_file,
             "--audio",

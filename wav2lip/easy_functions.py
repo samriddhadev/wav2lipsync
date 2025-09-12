@@ -40,7 +40,7 @@ def get_video_details(filename):
     fps = eval(video_stream["avg_frame_rate"])
 
     # Get length
-    length = float(info["format"]["duration"])
+    length = float(info["format"]["duration"]) if "duration" in info["format"] else 0.0
 
     return width, height, fps, length
 

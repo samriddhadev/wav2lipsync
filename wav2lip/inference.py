@@ -1,3 +1,5 @@
+from pathib import Path
+
 print("\rloading torch       ", end="")
 import torch
 
@@ -29,7 +31,7 @@ print("\rloading cv2         ", end="")
 import cv2
 
 print("\rloading audio       ", end="")
-import audio
+import wav2lip.audio as audio
 
 print("\rloading RetinaFace ", end="")
 from batch_face import RetinaFace
@@ -50,13 +52,13 @@ warnings.filterwarnings(
     "ignore", category=UserWarning, module="torchvision.transforms.functional_tensor"
 )
 print("\rloading upscale     ", end="")
-from enhance import upscale
+from wav2lip.enhance import upscale
 
 print("\rloading load_sr     ", end="")
-from enhance import load_sr
+from wav2lip.enhance import load_sr
 
 print("\rloading load_model  ", end="")
-from easy_functions import load_model, g_colab
+from wav2lip.easy_functions import load_model, g_colab
 
 print("\rimports loaded!     ")
 
@@ -236,24 +238,21 @@ parser.add_argument(
     default="Fast",
 )
 
-with open(os.path.join("checkpoints", "predictor.pkl"), "rb") as f:
+with open(os.path.join("wav2lip", "checkpoints", "predictor.pkl"), "rb") as f:
     predictor = pickle.load(f)
 
-with open(os.path.join("checkpoints", "mouth_detector.pkl"), "rb") as f:
+with open(os.path.join("wav2lip", "checkpoints", "mouth_detector.pkl"), "rb") as f:
     mouth_detector = pickle.load(f)
 
 # creating variables to prevent failing when a face isn't detected
 kernel = last_mask = x = y = w = h = None
 
-g_colab = g_colab()
+# Load the config file
+config = configparser.ConfigParser()
+config.read('config.ini')
 
-if not g_colab:
-  # Load the config file
-  config = configparser.ConfigParser()
-  config.read('config.ini')
-
-  # Get the value of the "preview_window" variable
-  preview_window = config.get('OPTIONS', 'preview_window')
+# Get the value of the "preview_window" variable
+preview_window = config.get('OPTIONS', 'preview_window')
 
 all_mouth_landmarks = []
 
@@ -629,6 +628,9 @@ def main():
 
     if not args.audio.endswith(".wav"):
         print("Converting audio to .wav")
+        if not os.path.exists(Path(os.getcwd()) / "temp"):
+            os.makedirs(Path(os.getcwd()) / "temp")
+
         subprocess.check_call(
             [
                 "ffmpeg",
@@ -637,8 +639,8 @@ def main():
                 "error",
                 "-i",
                 args.audio,
-                "temp/temp.wav",
-            ]
+                f"{os.getcwd()}/temp/temp.wav",
+            ] 
         )
         args.audio = "temp/temp.wav"
 
@@ -729,51 +731,49 @@ def main():
 
             f[y1:y2, x1:x2] = p
 
-            if not g_colab:
-                # Display the frame
-                if preview_window == "Face":
-                    cv2.imshow("face preview - press Q to abort", p)
-                elif preview_window == "Full":
-                    cv2.imshow("full preview - press Q to abort", f)
-                elif preview_window == "Both":
-                    cv2.imshow("face preview - press Q to abort", p)
-                    cv2.imshow("full preview - press Q to abort", f)
+            # Display the frame
+            # if preview_window == "Face":
+            #     cv2.imshow("face preview - press Q to abort", p)
+            # elif preview_window == "Full":
+            #     cv2.imshow("full preview - press Q to abort", f)
+            # elif preview_window == "Both":
+            #     cv2.imshow("face preview - press Q to abort", p)
+            #     cv2.imshow("full preview - press Q to abort", f)
 
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
-                    exit()  # Exit the loop when 'Q' is pressed
+            #     key = cv2.waitKey(1) & 0xFF
+            #     if key == ord('q'):
+            #         exit()  # Exit the loop when 'Q' is pressed
 
-            if str(args.preview_settings) == "True":
-                cv2.imwrite("temp/preview.jpg", f)
-                if not g_colab:
-                    cv2.imshow("preview - press Q to close", f)
-                    if cv2.waitKey(-1) & 0xFF == ord('q'):
-                        exit()  # Exit the loop when 'Q' is pressed
+            # if str(args.preview_settings) == "True":
+            #     cv2.imwrite("temp/preview.jpg", f)
+            #     if not g_colab:
+            #         cv2.imshow("preview - press Q to close", f)
+            #         if cv2.waitKey(-1) & 0xFF == ord('q'):
+            #             exit()  # Exit the loop when 'Q' is pressed
 
-            else:
-                out.write(f)
-
+            # else:
+            #     out.write(f)
+            out.write(f)
     # Close the window(s) when done
     cv2.destroyAllWindows()
 
     out.release()
 
-    if str(args.preview_settings) == "False":
-        print("converting to final video")
+    print("converting to final video")
 
-        subprocess.check_call([
-            "ffmpeg",
-            "-y",
-            "-loglevel",
-            "error",
-            "-i",
-            "temp/result.mp4",
-            "-i",
-            args.audio,
-            "-c:v",
-            "libx264",
-            args.outfile
-        ])
+    subprocess.check_call([
+        "ffmpeg",
+        "-y",
+        "-loglevel",
+        "error",
+        "-i",
+        "temp/result.mp4",
+        "-i",
+        args.audio,
+        "-c:v",
+        "libx264",
+        args.outfile
+    ])
 
 if __name__ == "__main__":
     args = parser.parse_args()

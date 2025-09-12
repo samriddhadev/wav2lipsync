@@ -1,0 +1,295 @@
+name: Deploy Custom AMI with Spot-to-OnDemand Fallback (US East 2)
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-2
+  CUSTOM_AMI_ID: ami-0255f10c6668ed4d4
+  INSTANCE_TYPE: g4dn.xlarge
+  KEY_NAME: ml-automation-us-east-2
+  SECURITY_GROUP: wav2lip-sg-us-east-2
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+        
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Configure AWS CLI
+        run: |
+          aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+          aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+          aws configure set default.region $AWS_REGION
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Decode PEM Key
+        run: |
+          echo "${{ secrets.EC2_AUTOMATION_KEY_US_EAST_2 }}" | base64 -d > key.pem
+          chmod 600 key.pem
+
+      - name: Create or get security group
+        run: |
+          set -e
+          SG_ID=$(aws ec2 describe-security-groups \
+            --group-names "$SECURITY_GROUP" \
+            --query 'SecurityGroups[0].GroupId' \
+            --output text 2>/dev/null || true)
+
+          if [ "$SG_ID" = "None" ] || [ -z "$SG_ID" ]; then
+            SG_ID=$(aws ec2 create-security-group \
+              --group-name "$SECURITY_GROUP" \
+              --description "Wav2Lip Custom AMI SG" \
+              --query 'GroupId' \
+              --output text)
+
+            # Allow SSH
+            aws ec2 authorize-security-group-ingress \
+              --group-id "$SG_ID" \
+              --protocol tcp \
+              --port 22 \
+              --cidr 0.0.0.0/0 || true
+
+            # Allow API
+            aws ec2 authorize-security-group-ingress \
+              --group-id "$SG_ID" \
+              --protocol tcp \
+              --port 8000 \
+              --cidr 0.0.0.0/0 || true
+          fi
+
+          echo "SG_ID=$SG_ID" >> "$GITHUB_ENV"
+
+      - name: Create or get instance profile for IAM role
+        run: |
+          set -e
+          ROLE_NAME="EC2SpotS3FullAccess"
+          INSTANCE_PROFILE_NAME="EC2SpotS3FullAccess-InstanceProfile"
+          
+          # Check if instance profile exists
+          if ! aws iam get-instance-profile --instance-profile-name "$INSTANCE_PROFILE_NAME" >/dev/null 2>&1; then
+            echo "Creating instance profile..."
+            aws iam create-instance-profile --instance-profile-name "$INSTANCE_PROFILE_NAME"
+            
+            # Add role to instance profile
+            aws iam add-role-to-instance-profile \
+              --instance-profile-name "$INSTANCE_PROFILE_NAME" \
+              --role-name "$ROLE_NAME"
+            
+            echo "Waiting for instance profile to be ready..."
+            sleep 10
+          else
+            echo "Instance profile already exists"
+          fi
+
+      - name: Try Spot instance first
+        id: spot_launch
+        continue-on-error: true
+        run: |
+          set -e
+
+          # List of instance types to try (primary first)
+          INSTANCE_TYPES=($INSTANCE_TYPE "g5.xlarge" "g5.2xlarge" "g4dn.2xlarge")
+          AZ_LIST=("us-east-2a" "us-east-2b" "us-east-2c" "us-east-2d" "us-east-2e" "us-east-2f")
+
+          SUCCESS=0
+
+          for ITYPE in "${INSTANCE_TYPES[@]}"; do
+            for AZ in "${AZ_LIST[@]}"; do
+              echo "Trying to launch SPOT instance type $ITYPE in AZ $AZ..."
+              
+              # Capture error output
+              ERROR_OUTPUT=$(aws ec2 run-instances \
+                --instance-type $ITYPE \
+                --image-id $CUSTOM_AMI_ID \
+                --key-name $KEY_NAME \
+                --security-group-ids $SG_ID \
+                --iam-instance-profile Name=EC2SpotS3FullAccess-InstanceProfile \
+                --placement AvailabilityZone=$AZ \
+                --instance-market-options '{"MarketType":"spot","SpotOptions":{"SpotInstanceType":"one-time"}}' \
+                --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":100}}]' \
+                --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=wav2lip-spot-custom-ami},{Key=Type,Value=spot}]' \
+                --query 'Instances[0].InstanceId' --output text 2>&1) || true
+
+              if [[ "$ERROR_OUTPUT" == "i-"* ]]; then
+                # Success: INSTANCE_ID starts with "i-"
+                INSTANCE_ID=$ERROR_OUTPUT
+                echo "SPOT instance launched successfully: $INSTANCE_ID (Type: $ITYPE, AZ: $AZ)"
+                echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_ENV
+                echo "LAUNCH_TYPE=spot" >> $GITHUB_ENV
+                echo "INSTANCE_TYPE_USED=$ITYPE" >> $GITHUB_ENV
+                SUCCESS=1
+                break 2
+              else
+                # Print exact AWS error
+                echo "Failed to launch SPOT in $AZ with type $ITYPE. Error:"
+                echo "$ERROR_OUTPUT"
+                WAIT=$((RANDOM % 5 + 3))  # wait 3–8 seconds
+                echo "Waiting $WAIT seconds before next attempt..."
+                sleep $WAIT
+              fi
+            done
+          done
+
+          if [ $SUCCESS -ne 1 ]; then
+            echo "WARNING: Could not launch spot instance in any AZ or instance type. Will try on-demand."
+            exit 1
+          fi
+
+      - name: Fallback to On-Demand instance
+        if: steps.spot_launch.outcome == 'failure'
+        run: |
+          set -e
+          echo "Spot launch failed, attempting on-demand instance..."
+
+          # List of instance types to try (primary first)
+          INSTANCE_TYPES=($INSTANCE_TYPE "g5.xlarge" "g5.2xlarge" "g4dn.2xlarge")
+          AZ_LIST=("us-east-2a" "us-east-2b" "us-east-2c" "us-east-2d" "us-east-2e" "us-east-2f")
+
+          SUCCESS=0
+
+          for ITYPE in "${INSTANCE_TYPES[@]}"; do
+            for AZ in "${AZ_LIST[@]}"; do
+              echo "Trying to launch ON-DEMAND instance type $ITYPE in AZ $AZ..."
+              
+              # Launch on-demand instance (no spot market options)
+              ERROR_OUTPUT=$(aws ec2 run-instances \
+                --instance-type $ITYPE \
+                --image-id $CUSTOM_AMI_ID \
+                --key-name $KEY_NAME \
+                --security-group-ids $SG_ID \
+                --iam-instance-profile Name=EC2SpotS3FullAccess-InstanceProfile \
+                --placement AvailabilityZone=$AZ \
+                --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":100}}]' \
+                --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=wav2lip-ondemand-custom-ami},{Key=Type,Value=on-demand}]' \
+                --query 'Instances[0].InstanceId' --output text 2>&1) || true
+
+              if [[ "$ERROR_OUTPUT" == "i-"* ]]; then
+                # Success: INSTANCE_ID starts with "i-"
+                INSTANCE_ID=$ERROR_OUTPUT
+                echo "ON-DEMAND instance launched successfully: $INSTANCE_ID (Type: $ITYPE, AZ: $AZ)"
+                echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_ENV
+                echo "LAUNCH_TYPE=on-demand" >> $GITHUB_ENV
+                echo "INSTANCE_TYPE_USED=$ITYPE" >> $GITHUB_ENV
+                SUCCESS=1
+                break 2
+              else
+                # Print exact AWS error
+                echo "Failed to launch ON-DEMAND in $AZ with type $ITYPE. Error:"
+                echo "$ERROR_OUTPUT"
+                WAIT=$((RANDOM % 5 + 3))  # wait 3–8 seconds
+                echo "Waiting $WAIT seconds before next attempt..."
+                sleep $WAIT
+              fi
+            done
+          done
+
+          if [ $SUCCESS -ne 1 ]; then
+            echo "ERROR: Could not launch on-demand instance in any AZ or instance type."
+            exit 1
+          fi
+
+      - name: Wait for instance and get public IP
+        run: |
+          # Save instance details to SSM
+          aws ssm put-parameter --name "/wav2lip/instance-id" --value "$INSTANCE_ID" --type String --overwrite
+          aws ssm put-parameter --name "/wav2lip/launch-type" --value "$LAUNCH_TYPE" --type String --overwrite
+          aws ssm put-parameter --name "/wav2lip/instance-type" --value "$INSTANCE_TYPE_USED" --type String --overwrite
+          
+          # Wait for instance to be running and status checks to pass
+          echo "Waiting for instance to be running..."
+          aws ec2 wait instance-running --instance-ids $INSTANCE_ID
+          
+          echo "Waiting for status checks to pass..."
+          aws ec2 wait instance-status-ok --instance-ids $INSTANCE_ID
+
+          # Get public IP
+          PUBLIC_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+          aws ssm put-parameter --name "/wav2lip/public-ip" --value "$PUBLIC_IP" --type String --overwrite
+          echo "PUBLIC_IP=$PUBLIC_IP" >> $GITHUB_ENV
+          
+          echo "========================================="
+          echo "Instance Details:"
+          echo "Instance ID: $INSTANCE_ID"
+          echo "Launch Type: $LAUNCH_TYPE"
+          echo "Instance Type: $INSTANCE_TYPE_USED"
+          echo "Public IP: $PUBLIC_IP"
+          echo "AMI ID: $CUSTOM_AMI_ID"
+          echo "========================================="
+
+      - name: Wait for SSH to be ready
+        run: |
+          echo "Waiting for SSH to be ready on $PUBLIC_IP..."
+          for i in {1..30}; do
+            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i key.pem ubuntu@$PUBLIC_IP "echo 'SSH is ready'" >/dev/null 2>&1; then
+              echo "SSH connection established successfully!"
+              break
+            fi
+            echo "Attempt $i/30: SSH not ready yet, waiting 10 seconds..."
+            sleep 10
+          done
+
+      - name: Verify custom AMI setup
+        run: |
+          ssh -o StrictHostKeyChecking=no -i key.pem ubuntu@$PUBLIC_IP << 'EOF'
+            echo "========================================="
+            echo "Verifying Custom AMI Setup"
+            echo "========================================="
+            
+            # Check Python version
+            echo "Python version:"
+            python3.10 --version || echo "Python 3.10 not found"
+            
+            # Check Poetry
+            echo "Poetry version:"
+            export PATH="$HOME/.local/bin:$PATH"
+            poetry --version || echo "Poetry not found"
+            
+            # Check NVIDIA drivers
+            echo "NVIDIA drivers:"
+            nvidia-smi || echo "NVIDIA drivers not working"
+            
+            # Check if wav2lip directory exists
+            echo "Wav2lip directory structure:"
+            ls -la /home/ubuntu/ | grep wav2lip || echo "wav2lip directory not found"
+            
+            # Check if checkpoints exist
+            echo "Checkpoints:"
+            ls -la /home/ubuntu/wav2lip/checkpoints/ 2>/dev/null || echo "Checkpoints directory not found"
+            
+            # Check PyTorch in the virtual environment
+            echo "PyTorch in virtual environment:"
+            cd /home/ubuntu
+            if [ -d ".venv" ]; then
+              poetry run python -c "import torch; print(f'PyTorch version: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA device count: {torch.cuda.device_count()}')" 2>/dev/null || echo "PyTorch not properly configured"
+            else
+              echo "Virtual environment not found"
+            fi
+            
+            echo "========================================="
+            echo "Custom AMI verification complete!"
+            echo "Instance is ready to use."
+            echo "========================================="
+          EOF
+
+      - name: Display connection information
+        run: |
+          echo "========================================="
+          echo "DEPLOYMENT SUCCESSFUL!"
+          echo "========================================="
+          echo "Instance ID: $INSTANCE_ID"
+          echo "Launch Type: $LAUNCH_TYPE"
+          echo "Instance Type: $INSTANCE_TYPE_USED"
+          echo "Public IP: $PUBLIC_IP"
+          echo "AMI ID: $CUSTOM_AMI_ID"
+          echo ""
+          echo "To connect via SSH:"
+          echo "ssh -i your-key.pem ubuntu@$PUBLIC_IP"
+          echo ""
+          echo "To access the API (if running):"
+          echo "http://$PUBLIC_IP:8000"
+          echo "========================================="

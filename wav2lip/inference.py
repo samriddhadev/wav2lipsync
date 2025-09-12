@@ -724,10 +724,14 @@ def main():
                 p = upscale(p, run_params)
 
             if args.quality in ["Enhanced", "Improved"]:
-                if str(args.mouth_tracking) == "True":
-                    p, last_mask = create_tracked_mask(p, cf)
-                else:
-                    p, last_mask = create_mask(p, cf)
+                try:
+                    if str(args.mouth_tracking) == "True":
+                        p, last_mask = create_tracked_mask(p, cf)
+                    else:
+                        p, last_mask = create_mask(p, cf)
+                except Exception as e:
+                    print("Error in creating mask:", e)
+                    pass
 
             f[y1:y2, x1:x2] = p
 

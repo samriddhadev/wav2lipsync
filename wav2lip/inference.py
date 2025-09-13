@@ -581,6 +581,7 @@ def _load(checkpoint_path):
 
 
 def main():
+    print("start of main")
     args.img_size = 96
     frame_number = 11
 

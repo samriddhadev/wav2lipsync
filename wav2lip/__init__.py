@@ -19,6 +19,7 @@ if not torch.cuda.is_available():
 setup()
 
 def run(video_path, audio_path, output_path, config: Wav2LipConfig):
+    print("Starting Wav2Lip processing...")
     try:
         video_file = video_path
         vocal_file = audio_path
